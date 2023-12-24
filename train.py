@@ -14,6 +14,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 from torch.autograd import Variable
 from tqdm import tqdm
+import csv
 
 import utils
 import model.net as net
@@ -27,7 +28,7 @@ from evaluate import evaluate, evaluate_kd
 
 parser = argparse.ArgumentParser()
 # parser.add_argument('--data_dir', default='data/64x64_SIGNS', help="Directory for the dataset")
-parser.add_argument('--model_dir', default='experiments/base_model',
+parser.add_argument('--model_dir', default='experiments/base_cnn',
                     help="Directory containing params.json")
 parser.add_argument('--restore_file', default=None,
                     help="Optional, name of the file in --model_dir \
@@ -58,10 +59,9 @@ def train(model, optimizer, loss_fn, dataloader, metrics, params):
         for i, (train_batch, labels_batch) in enumerate(dataloader):
             # move to GPU if available
             if params.cuda:
-                train_batch, labels_batch = train_batch.cuda(async=True), \
-                                            labels_batch.cuda(async=True)
-            # convert to torch Variables
-            train_batch, labels_batch = Variable(train_batch), Variable(labels_batch)
+                train_batch, labels_batch = train_batch.to('cuda'), labels_batch.to('cuda')
+            # # convert to torch Variables
+            # train_batch, labels_batch = Variable(train_batch), Variable(labels_batch)
 
             # compute model output and loss
             output_batch = model(train_batch)
@@ -83,11 +83,11 @@ def train(model, optimizer, loss_fn, dataloader, metrics, params):
                 # compute all metrics on this batch
                 summary_batch = {metric:metrics[metric](output_batch, labels_batch)
                                  for metric in metrics}
-                summary_batch['loss'] = loss.data[0]
+                summary_batch['loss'] = loss.item()
                 summ.append(summary_batch)
 
             # update the average loss
-            loss_avg.update(loss.data[0])
+            loss_avg.update(loss.item())
 
             t.set_postfix(loss='{:05.3f}'.format(loss_avg()))
             t.update()
@@ -96,6 +96,8 @@ def train(model, optimizer, loss_fn, dataloader, metrics, params):
     metrics_mean = {metric:np.mean([x[metric] for x in summ]) for metric in summ[0]}
     metrics_string = " ; ".join("{}: {:05.3f}".format(k, v) for k, v in metrics_mean.items())
     logging.info("- Train metrics: " + metrics_string)
+    
+    return metrics_mean
 
 
 def train_and_evaluate(model, train_dataloader, val_dataloader, optimizer,
@@ -122,19 +124,25 @@ def train_and_evaluate(model, train_dataloader, val_dataloader, optimizer,
     # for cnn models, num_epoch is always < 100, so it's intentionally not using scheduler here
     elif params.model_version == "cnn":
         scheduler = StepLR(optimizer, step_size=100, gamma=0.2)
+    
+    training_data = [
+        ['train_acc', 'train_loss']
+    ]
+    
+    valid_data = [
+        ['val_acc', 'val_loss']
+    ]
 
     for epoch in range(params.num_epochs):
-     
         scheduler.step()
-     
         # Run one epoch
         logging.info("Epoch {}/{}".format(epoch + 1, params.num_epochs))
-
         # compute number of batches in one epoch (one full pass over the training set)
-        train(model, optimizer, loss_fn, train_dataloader, metrics, params)
-
+        train_metrics = train(model, optimizer, loss_fn, train_dataloader, metrics, params)
+        training_data.append([train_metrics['accuracy'], train_metrics['loss']])
         # Evaluate for one epoch on validation set
-        val_metrics = evaluate(model, loss_fn, val_dataloader, metrics, params)        
+        val_metrics = evaluate(model, loss_fn, val_dataloader, metrics, params)
+        valid_data.append([val_metrics['accuracy'], val_metrics['loss']])
 
         val_acc = val_metrics['accuracy']
         is_best = val_acc>=best_val_acc
@@ -158,6 +166,8 @@ def train_and_evaluate(model, train_dataloader, val_dataloader, optimizer,
         # Save latest val metrics in a json file in the model directory
         last_json_path = os.path.join(model_dir, "metrics_val_last_weights.json")
         utils.save_dict_to_json(val_metrics, last_json_path)
+        
+    return training_data, valid_data
 
 
 # Defining train_kd & train_and_evaluate_kd functions
@@ -186,8 +196,8 @@ def train_kd(model, teacher_model, optimizer, loss_fn_kd, dataloader, metrics, p
         for i, (train_batch, labels_batch) in enumerate(dataloader):
             # move to GPU if available
             if params.cuda:
-                train_batch, labels_batch = train_batch.cuda(async=True), \
-                                            labels_batch.cuda(async=True)
+                train_batch, labels_batch = train_batch.to('cuda'), \
+                                            labels_batch.to('cuda')
             # convert to torch Variables
             train_batch, labels_batch = Variable(train_batch), Variable(labels_batch)
 
@@ -199,7 +209,7 @@ def train_kd(model, teacher_model, optimizer, loss_fn_kd, dataloader, metrics, p
             with torch.no_grad():
                 output_teacher_batch = teacher_model(train_batch)
             if params.cuda:
-                output_teacher_batch = output_teacher_batch.cuda(async=True)
+                output_teacher_batch = output_teacher_batch.to('cuda')
 
             loss = loss_fn_kd(output_batch, labels_batch, output_teacher_batch, params)
 
@@ -219,11 +229,11 @@ def train_kd(model, teacher_model, optimizer, loss_fn_kd, dataloader, metrics, p
                 # compute all metrics on this batch
                 summary_batch = {metric:metrics[metric](output_batch, labels_batch)
                                  for metric in metrics}
-                summary_batch['loss'] = loss.data[0]
+                summary_batch['loss'] = loss.item()
                 summ.append(summary_batch)
 
             # update the average loss
-            loss_avg.update(loss.data[0])
+            loss_avg.update(loss.item())
 
             t.set_postfix(loss='{:05.3f}'.format(loss_avg()))
             t.update()
@@ -232,7 +242,8 @@ def train_kd(model, teacher_model, optimizer, loss_fn_kd, dataloader, metrics, p
     metrics_mean = {metric:np.mean([x[metric] for x in summ]) for metric in summ[0]}
     metrics_string = " ; ".join("{}: {:05.3f}".format(k, v) for k, v in metrics_mean.items())
     logging.info("- Train metrics: " + metrics_string)
-
+    
+    return metrics_mean
 
 def train_and_evaluate_kd(model, teacher_model, train_dataloader, val_dataloader, optimizer,
                        loss_fn_kd, metrics, params, model_dir, restore_file=None):
@@ -252,8 +263,13 @@ def train_and_evaluate_kd(model, teacher_model, train_dataloader, val_dataloader
 
     best_val_acc = 0.0
     
-    # Tensorboard logger setup
-    # board_logger = utils.Board_Logger(os.path.join(model_dir, 'board_logs'))
+    training_data = [
+        ['train_acc', 'train_loss']
+    ]
+    
+    valid_data = [
+        ['val_acc', 'val_loss']
+    ]
 
     # learning rate schedulers for different models:
     if params.model_version == "resnet18_distill":
@@ -270,12 +286,12 @@ def train_and_evaluate_kd(model, teacher_model, train_dataloader, val_dataloader
         logging.info("Epoch {}/{}".format(epoch + 1, params.num_epochs))
 
         # compute number of batches in one epoch (one full pass over the training set)
-        train_kd(model, teacher_model, optimizer, loss_fn_kd, train_dataloader,
+        train_metrics = train_kd(model, teacher_model, optimizer, loss_fn_kd, train_dataloader,
                  metrics, params)
-
+        training_data.append([train_metrics['accuracy'], train_metrics['loss']])
         # Evaluate for one epoch on validation set
         val_metrics = evaluate_kd(model, val_dataloader, metrics, params)
-
+        valid_data.append([val_metrics['accuracy'], val_metrics['loss']])
         val_acc = val_metrics['accuracy']
         is_best = val_acc>=best_val_acc
 
@@ -298,23 +314,8 @@ def train_and_evaluate_kd(model, teacher_model, train_dataloader, val_dataloader
         # Save latest val metrics in a json file in the model directory
         last_json_path = os.path.join(model_dir, "metrics_val_last_weights.json")
         utils.save_dict_to_json(val_metrics, last_json_path)
-
-
-        # #============ TensorBoard logging: uncomment below to turn in on ============#
-        # # (1) Log the scalar values
-        # info = {
-        #     'val accuracy': val_acc
-        # }
-
-        # for tag, value in info.items():
-        #     board_logger.scalar_summary(tag, value, epoch+1)
-
-        # # (2) Log values and gradients of the parameters (histogram)
-        # for tag, value in model.named_parameters():
-        #     tag = tag.replace('.', '/')
-        #     board_logger.histo_summary(tag, value.data.cpu().numpy(), epoch+1)
-        #     # board_logger.histo_summary(tag+'/grad', value.grad.data.cpu().numpy(), epoch+1)
-
+    
+    return training_data, valid_data
 
 if __name__ == '__main__':
 
@@ -328,9 +329,9 @@ if __name__ == '__main__':
     params.cuda = torch.cuda.is_available()
 
     # Set the random seed for reproducible experiments
-    random.seed(230)
-    torch.manual_seed(230)
-    if params.cuda: torch.cuda.manual_seed(230)
+    random.seed(42)
+    torch.manual_seed(42)
+    if params.cuda: torch.cuda.manual_seed(42)
 
     # Set the logger
     utils.set_logger(os.path.join(args.model_dir, 'train.log'))
@@ -347,6 +348,11 @@ if __name__ == '__main__':
     dev_dl = data_loader.fetch_dataloader('dev', params)
 
     logging.info("- done.")
+    
+    if os.path.exists(f'{args.model_dir}/train_log.csv'):
+        os.remove(f'{args.model_dir}/train_log.csv')
+    if os.path.exists(f'{args.model_dir}/test_log.csv'):
+        os.remove(f'{args.model_dir}/test_log.csv')
 
     """Based on the model_version, determine model/optimizer and KD training mode
        WideResNet and DenseNet were trained on multi-GPU; need to specify a dummy
@@ -408,7 +414,7 @@ if __name__ == '__main__':
         logging.info("Experiment - model version: {}".format(params.model_version))
         logging.info("Starting training for {} epoch(s)".format(params.num_epochs))
         logging.info("First, loading the teacher model and computing its outputs...")
-        train_and_evaluate_kd(model, teacher_model, train_dl, dev_dl, optimizer, loss_fn_kd,
+        training_data, valid_data = train_and_evaluate_kd(model, teacher_model, train_dl, dev_dl, optimizer, loss_fn_kd,
                               metrics, params, args.model_dir, args.restore_file)
 
     # non-KD mode: regular training of the baseline CNN or ResNet-18
@@ -428,16 +434,18 @@ if __name__ == '__main__':
             loss_fn = resnet.loss_fn
             metrics = resnet.metrics
 
-        # elif params.model_version == "wrn":
-        #     model = wrn.wrn(depth=28, num_classes=10, widen_factor=10, dropRate=0.3)
-        #     model = model.cuda() if params.cuda else model
-        #     optimizer = optim.SGD(model.parameters(), lr=params.learning_rate,
-        #                           momentum=0.9, weight_decay=5e-4)
-        #     # fetch loss function and metrics
-        #     loss_fn = wrn.loss_fn
-        #     metrics = wrn.metrics
-
         # Train the model
         logging.info("Starting training for {} epoch(s)".format(params.num_epochs))
-        train_and_evaluate(model, train_dl, dev_dl, optimizer, loss_fn, metrics, params,
+        training_data, valid_data = train_and_evaluate(model, train_dl, dev_dl, optimizer, loss_fn, metrics, params,
                            args.model_dir, args.restore_file)
+        
+    
+    with open(f'{args.model_dir}/train_log.csv', 'a') as f:
+        csv_writer = csv.writer(f)
+        for row in training_data:
+            csv_writer.writerow(row)
+            
+    with open(f'{args.model_dir}/test_log.csv', 'a') as f:
+        csv_writer = csv.writer(f)
+        for row in valid_data:
+            csv_writer.writerow(row)

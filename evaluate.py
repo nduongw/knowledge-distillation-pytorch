@@ -41,7 +41,7 @@ def evaluate(model, loss_fn, dataloader, metrics, params):
 
         # move to GPU if available
         if params.cuda:
-            data_batch, labels_batch = data_batch.cuda(async=True), labels_batch.cuda(async=True)
+            data_batch, labels_batch = data_batch.to('cuda'), labels_batch.to('cuda')
         # fetch the next evaluation batch
         data_batch, labels_batch = Variable(data_batch), Variable(labels_batch)
         
@@ -56,7 +56,7 @@ def evaluate(model, loss_fn, dataloader, metrics, params):
         # compute all metrics on this batch
         summary_batch = {metric: metrics[metric](output_batch, labels_batch)
                          for metric in metrics}
-        summary_batch['loss'] = loss.data[0]
+        summary_batch['loss'] = loss.item()
         summ.append(summary_batch)
 
     # compute mean of all metrics in summary
@@ -94,7 +94,7 @@ def evaluate_kd(model, dataloader, metrics, params):
 
         # move to GPU if available
         if params.cuda:
-            data_batch, labels_batch = data_batch.cuda(async=True), labels_batch.cuda(async=True)
+            data_batch, labels_batch = data_batch.to('cuda'), labels_batch.to('cuda')
         # fetch the next evaluation batch
         data_batch, labels_batch = Variable(data_batch), Variable(labels_batch)
         
@@ -120,51 +120,3 @@ def evaluate_kd(model, dataloader, metrics, params):
     metrics_string = " ; ".join("{}: {:05.3f}".format(k, v) for k, v in metrics_mean.items())
     logging.info("- Eval metrics : " + metrics_string)
     return metrics_mean
-
-
-# if __name__ == '__main__':
-#     """
-#         Evaluate the model on a dataset for one pass.
-#     """
-#     # Load the parameters
-#     args = parser.parse_args()
-#     json_path = os.path.join(args.model_dir, 'params.json')
-#     assert os.path.isfile(json_path), "No json configuration file found at {}".format(json_path)
-#     params = utils.Params(json_path)
-
-#     # use GPU if available
-#     params.cuda = torch.cuda.is_available()     # use GPU is available
-
-#     # Set the random seed for reproducible experiments
-#     torch.manual_seed(230)
-#     if params.cuda: torch.cuda.manual_seed(230)
-        
-#     # Get the logger
-#     utils.set_logger(os.path.join(args.model_dir, 'evaluate.log'))
-
-#     # Create the input data pipeline
-#     logging.info("Loading the dataset...")
-
-#     # fetch dataloaders
-#     # train_dl = data_loader.fetch_dataloader('train', params)
-#     dev_dl = data_loader.fetch_dataloader('dev', params)
-
-#     logging.info("- done.")
-
-#     # Define the model graph
-#     model = resnet.ResNet18().cuda() if params.cuda else resnet.ResNet18()
-#     optimizer = optim.SGD(model.parameters(), lr=params.learning_rate,
-#                           momentum=0.9, weight_decay=5e-4)
-#     # fetch loss function and metrics
-#     loss_fn_kd = net.loss_fn_kd
-#     metrics = resnet.metrics
-    
-#     logging.info("Starting evaluation...")
-
-#     # Reload weights from the saved file
-#     utils.load_checkpoint(os.path.join(args.model_dir, args.restore_file + '.pth.tar'), model)
-
-#     # Evaluate
-#     test_metrics = evaluate_kd(model, dev_dl, metrics, params)
-#     save_path = os.path.join(args.model_dir, "metrics_test_{}.json".format(args.restore_file))
-#     utils.save_dict_to_json(test_metrics, save_path)
