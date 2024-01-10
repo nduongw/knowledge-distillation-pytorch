@@ -81,19 +81,6 @@ class Net(nn.Module):
 
 
 def loss_fn(outputs, labels):
-    """
-    Compute the cross entropy loss given outputs and labels.
-
-    Args:
-        outputs: (Variable) dimension batch_size x 6 - output of the model
-        labels: (Variable) dimension batch_size, where each element is a value in [0, 1, 2, 3, 4, 5]
-
-    Returns:
-        loss (Variable): cross entropy loss for all images in the batch
-
-    Note: you may use a standard loss function from http://pytorch.org/docs/master/nn.html#loss-functions. This example
-          demonstrates how you can easily define a custom loss function.
-    """
     return nn.CrossEntropyLoss()(outputs, labels)
 
 
@@ -107,9 +94,21 @@ def loss_fn_kd(outputs, labels, teacher_outputs, params):
     """
     alpha = params.alpha
     T = params.temperature
+    # KL --> Do su khac nhau giua 2 phan phoi du lieu (Output co se co dang phan phoi (gia tri cua tung class))
+    # CrossEntropy --> Do su khac nhau giua 2 con so (Output minh chon la gia tri lon nhat cua cai phan phoi model hoc ra)
     KD_loss = nn.KLDivLoss()(F.log_softmax(outputs/T, dim=1),
                              F.softmax(teacher_outputs/T, dim=1)) * (alpha * T * T) + \
               F.cross_entropy(outputs, labels) * (1. - alpha)
+              
+    # Temperature
+    """
+    Teacher --> Model co tri thuc --> Output cua teacher model se la output gan chuan
+    Bai toan phan biet 3 classes: Cho, meo, ga (0, 1, 2)
+    Teacher co the du doan gan chinh 3 loai vat tren --> Vi du sample thuoc lop Cho
+    Teacher output: 0.95, 0.025, 0.025
+    --> Dung them T --> Lam output tren no do bi lech hon --> Student model hoc de hon
+    0.7, 0.15, 0.15
+    """
 
     return KD_loss
 

@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=0 python train.py --model_dir experiments/cnn_distill
+CUDA_VISIBLE_DEVICES=1 python train.py --model_dir experiments/cnn_distill

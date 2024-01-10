@@ -42,8 +42,6 @@ def evaluate(model, loss_fn, dataloader, metrics, params):
         # move to GPU if available
         if params.cuda:
             data_batch, labels_batch = data_batch.to('cuda'), labels_batch.to('cuda')
-        # fetch the next evaluation batch
-        data_batch, labels_batch = Variable(data_batch), Variable(labels_batch)
         
         # compute model output
         output_batch = model(data_batch)
@@ -71,7 +69,7 @@ This function duplicates "evaluate()" but ignores "loss_fn" simply for speedup p
 Validation loss during KD mode would display '0' all the time.
 One can bring that info back by using the fetched teacher outputs during evaluation (refer to train.py)
 """
-def evaluate_kd(model, dataloader, metrics, params):
+def evaluate_kd(model, teacher_model, loss_fn_kd, dataloader, metrics, params):
     """Evaluate the model on `num_steps` batches.
 
     Args:
@@ -85,7 +83,7 @@ def evaluate_kd(model, dataloader, metrics, params):
 
     # set model to evaluation mode
     model.eval()
-
+    teacher_model.eval()
     # summary for current eval loop
     summ = []
 
@@ -95,15 +93,13 @@ def evaluate_kd(model, dataloader, metrics, params):
         # move to GPU if available
         if params.cuda:
             data_batch, labels_batch = data_batch.to('cuda'), labels_batch.to('cuda')
-        # fetch the next evaluation batch
-        data_batch, labels_batch = Variable(data_batch), Variable(labels_batch)
         
         # compute model output
         output_batch = model(data_batch)
+        # output_teacher_batch = teacher_model(data_batch)
 
         # loss = loss_fn_kd(output_batch, labels_batch, output_teacher_batch, params)
-        loss = 0.0  #force validation loss to zero to reduce computation time
-
+        loss = 0.0
         # extract data from torch Variable, move to cpu, convert to numpy arrays
         output_batch = output_batch.data.cpu().numpy()
         labels_batch = labels_batch.data.cpu().numpy()

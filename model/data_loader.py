@@ -41,15 +41,15 @@ def fetch_dataloader(types, params):
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=params.batch_size,
         shuffle=True, num_workers=params.num_workers, pin_memory=params.cuda)
 
-    devset = torchvision.datasets.CIFAR10(root='./data-cifar10', train=False,
+    testset = torchvision.datasets.CIFAR10(root='./data-cifar10', train=False,
         download=True, transform=dev_transformer)
-    devloader = torch.utils.data.DataLoader(devset, batch_size=params.batch_size,
+    testloader = torch.utils.data.DataLoader(testset, batch_size=params.batch_size,
         shuffle=False, num_workers=params.num_workers, pin_memory=params.cuda)
 
     if types == 'train':
         dl = trainloader
     else:
-        dl = devloader
+        dl = testloader
 
     return dl
 

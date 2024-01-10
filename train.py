@@ -12,7 +12,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
-from torch.autograd import Variable
 from tqdm import tqdm
 import csv
 
@@ -60,8 +59,6 @@ def train(model, optimizer, loss_fn, dataloader, metrics, params):
             # move to GPU if available
             if params.cuda:
                 train_batch, labels_batch = train_batch.to('cuda'), labels_batch.to('cuda')
-            # # convert to torch Variables
-            # train_batch, labels_batch = Variable(train_batch), Variable(labels_batch)
 
             # compute model output and loss
             output_batch = model(train_batch)
@@ -100,7 +97,7 @@ def train(model, optimizer, loss_fn, dataloader, metrics, params):
     return metrics_mean
 
 
-def train_and_evaluate(model, train_dataloader, val_dataloader, optimizer,
+def train_and_evaluate(model, train_dataloader, test_dataset, optimizer,
                        loss_fn, metrics, params, model_dir, restore_file=None):
     """Train the model and evaluate every epoch.
 
@@ -110,20 +107,7 @@ def train_and_evaluate(model, train_dataloader, val_dataloader, optimizer,
         model_dir: (string) directory containing config, weights and log
         restore_file: (string) - name of file to restore from (without its extension .pth.tar)
     """
-    # reload weights from restore_file if specified
-    if restore_file is not None:
-        restore_path = os.path.join(args.model_dir, args.restore_file + '.pth.tar')
-        logging.info("Restoring parameters from {}".format(restore_path))
-        utils.load_checkpoint(restore_path, model, optimizer)
-
     best_val_acc = 0.0
-
-    # learning rate schedulers for different models:
-    if params.model_version == "resnet18":
-        scheduler = StepLR(optimizer, step_size=150, gamma=0.1)
-    # for cnn models, num_epoch is always < 100, so it's intentionally not using scheduler here
-    elif params.model_version == "cnn":
-        scheduler = StepLR(optimizer, step_size=100, gamma=0.2)
     
     training_data = [
         ['train_acc', 'train_loss']
@@ -134,25 +118,20 @@ def train_and_evaluate(model, train_dataloader, val_dataloader, optimizer,
     ]
 
     for epoch in range(params.num_epochs):
-        scheduler.step()
         # Run one epoch
         logging.info("Epoch {}/{}".format(epoch + 1, params.num_epochs))
         # compute number of batches in one epoch (one full pass over the training set)
         train_metrics = train(model, optimizer, loss_fn, train_dataloader, metrics, params)
         training_data.append([train_metrics['accuracy'], train_metrics['loss']])
-        # Evaluate for one epoch on validation set
-        val_metrics = evaluate(model, loss_fn, val_dataloader, metrics, params)
+        # Evaluate for one epoch on test set
+        val_metrics = evaluate(model, loss_fn, test_dataset, metrics, params)
         valid_data.append([val_metrics['accuracy'], val_metrics['loss']])
 
         val_acc = val_metrics['accuracy']
         is_best = val_acc>=best_val_acc
 
         # Save weights
-        utils.save_checkpoint({'epoch': epoch + 1,
-                               'state_dict': model.state_dict(),
-                               'optim_dict' : optimizer.state_dict()},
-                               is_best=is_best,
-                               checkpoint=model_dir)
+        utils.save_checkpoint(model.state_dict(), is_best=is_best, checkpoint=model_dir)
 
         # If best_eval, best_save_path
         if is_best:
@@ -196,16 +175,12 @@ def train_kd(model, teacher_model, optimizer, loss_fn_kd, dataloader, metrics, p
         for i, (train_batch, labels_batch) in enumerate(dataloader):
             # move to GPU if available
             if params.cuda:
-                train_batch, labels_batch = train_batch.to('cuda'), \
-                                            labels_batch.to('cuda')
-            # convert to torch Variables
-            train_batch, labels_batch = Variable(train_batch), Variable(labels_batch)
+                train_batch, labels_batch = train_batch.to('cuda'), labels_batch.to('cuda')
 
             # compute model output, fetch teacher output, and compute KD loss
             output_batch = model(train_batch)
 
             # get one batch output from teacher_outputs list
-
             with torch.no_grad():
                 output_teacher_batch = teacher_model(train_batch)
             if params.cuda:
@@ -255,11 +230,6 @@ def train_and_evaluate_kd(model, teacher_model, train_dataloader, val_dataloader
         model_dir: (string) directory containing config, weights and log
         restore_file: (string) - file to restore (without its extension .pth.tar)
     """
-    # reload weights from restore_file if specified
-    if restore_file is not None:
-        restore_path = os.path.join(args.model_dir, args.restore_file + '.pth.tar')
-        logging.info("Restoring parameters from {}".format(restore_path))
-        utils.load_checkpoint(restore_path, model, optimizer)
 
     best_val_acc = 0.0
     
@@ -271,17 +241,7 @@ def train_and_evaluate_kd(model, teacher_model, train_dataloader, val_dataloader
         ['val_acc', 'val_loss']
     ]
 
-    # learning rate schedulers for different models:
-    if params.model_version == "resnet18_distill":
-        scheduler = StepLR(optimizer, step_size=150, gamma=0.1)
-    # for cnn models, num_epoch is always < 100, so it's intentionally not using scheduler here
-    elif params.model_version == "cnn_distill": 
-        scheduler = StepLR(optimizer, step_size=100, gamma=0.2) 
-
     for epoch in range(params.num_epochs):
-
-        scheduler.step()
-
         # Run one epoch
         logging.info("Epoch {}/{}".format(epoch + 1, params.num_epochs))
 
@@ -290,17 +250,13 @@ def train_and_evaluate_kd(model, teacher_model, train_dataloader, val_dataloader
                  metrics, params)
         training_data.append([train_metrics['accuracy'], train_metrics['loss']])
         # Evaluate for one epoch on validation set
-        val_metrics = evaluate_kd(model, val_dataloader, metrics, params)
+        val_metrics = evaluate_kd(model, teacher_model, loss_fn_kd, val_dataloader, metrics, params)
         valid_data.append([val_metrics['accuracy'], val_metrics['loss']])
         val_acc = val_metrics['accuracy']
         is_best = val_acc>=best_val_acc
 
         # Save weights
-        utils.save_checkpoint({'epoch': epoch + 1,
-                               'state_dict': model.state_dict(),
-                               'optim_dict' : optimizer.state_dict()},
-                               is_best=is_best,
-                               checkpoint=model_dir)
+        utils.save_checkpoint(model.state_dict(), is_best=is_best, checkpoint=model_dir)
 
         # If best_eval, best_save_path
         if is_best:
@@ -345,7 +301,7 @@ if __name__ == '__main__':
     else:
         train_dl = data_loader.fetch_dataloader('train', params)
     
-    dev_dl = data_loader.fetch_dataloader('dev', params)
+    dev_dl = data_loader.fetch_dataloader('test', params)
 
     logging.info("- done.")
     
